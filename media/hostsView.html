@@ -54,6 +54,49 @@
     text-align: center;
     line-height: 1.5;
   }
+  .buttons.secondary {
+    margin-top: 4px;
+  }
+  .buttons.secondary button {
+    flex: 1;
+    font-size: 11px;
+    padding: 3px 0;
+  }
+  .group-header {
+    margin-top: 10px;
+    padding: 2px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    opacity: 0.85;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .group-header::before {
+    content: '▼';
+    display: inline-block;
+    width: 1em;
+    font-size: 9px;
+    opacity: 0.7;
+  }
+  .group-header.collapsed::before {
+    content: '▶';
+  }
+  .group-header .count {
+    opacity: 0.6;
+    font-weight: normal;
+    font-size: 11px;
+  }
+  .group-items {
+    margin-left: 6px;
+  }
+  .item .group-badge {
+    margin-left: 6px;
+    font-size: 10px;
+    opacity: 0.5;
+  }
 </style>
 </head>
 <body>
@@ -63,6 +106,10 @@
     <button id="edit">Edit</button>
     <button id="delete">Delete</button>
   </div>
+  <div class="buttons secondary">
+    <button id="export">Export JSON</button>
+    <button id="import">Import JSON</button>
+  </div>
   <div class="list" id="list"></div>
   <script>
     const vscode = acquireVsCodeApi();
@@ -70,6 +117,17 @@
     const list = document.getElementById('list');
     let hosts = [];
     let selectedId = null;
+    let collapsed = new Set();
+    let filterActive = false;
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
     function render() {
       list.textContent = '';
@@ -82,23 +140,65 @@
         list.appendChild(empty);
         return;
       }
+
+      // Group hosts by their group field ('' => Ungrouped)
+      const groups = new Map();
       for (const h of hosts) {
-        const item = document.createElement('div');
-        item.className = 'item' + (h.id === selectedId ? ' selected' : '');
-        const name = document.createElement('div');
-        name.textContent = h.name;
-        const detail = document.createElement('div');
-        detail.className = 'detail';
-        detail.textContent = h.detail;
-        item.append(name, detail);
-        item.addEventListener('click', () => {
-          selectedId = h.id;
+        const g = h.group || '';
+        if (!groups.has(g)) groups.set(g, []);
+        groups.get(g).push(h);
+      }
+
+      // Sort groups alphabetically; put Ungrouped (empty) last
+      const groupNames = Array.from(groups.keys()).sort((a, b) => {
+        if (!a) return 1;
+        if (!b) return -1;
+        return a.localeCompare(b);
+      });
+
+      for (const g of groupNames) {
+        const items = groups.get(g) || [];
+        const isCollapsed = collapsed.has(g) && !filterActive;
+
+        // Clickable group header with chevron
+        const header = document.createElement('div');
+        header.className = 'group-header' + (isCollapsed ? ' collapsed' : '');
+        const label = g || 'Ungrouped';
+        header.innerHTML =
+          `<span>${escapeHtml(label)}</span><span class="count">(${items.length})</span>`;
+        header.addEventListener('click', () => {
+          if (filterActive) return;
+          // Optimistic toggle for snappy feel; extension will confirm via refresh
+          if (collapsed.has(g)) collapsed.delete(g); else collapsed.add(g);
+          vscode.postMessage({ type: 'toggleGroup', group: g });
           render();
         });
-        item.addEventListener('dblclick', () =>
-          vscode.postMessage({ type: 'connect', id: h.id })
-        );
-        list.appendChild(item);
+        list.appendChild(header);
+
+        if (isCollapsed) continue;
+
+        const container = document.createElement('div');
+        container.className = 'group-items';
+
+        for (const h of items) {
+          const item = document.createElement('div');
+          item.className = 'item' + (h.id === selectedId ? ' selected' : '');
+          const name = document.createElement('div');
+          name.textContent = h.name;
+          const detail = document.createElement('div');
+          detail.className = 'detail';
+          detail.textContent = h.detail;
+          item.append(name, detail);
+          item.addEventListener('click', () => {
+            selectedId = h.id;
+            render();
+          });
+          item.addEventListener('dblclick', () =>
+            vscode.postMessage({ type: 'connect', id: h.id })
+          );
+          container.appendChild(item);
+        }
+        list.appendChild(container);
       }
     }
 
@@ -114,11 +214,20 @@
     document.getElementById('delete').addEventListener('click', () =>
       vscode.postMessage({ type: 'delete', id: selectedId })
     );
+    document.getElementById('export').addEventListener('click', () =>
+      vscode.postMessage({ type: 'export' })
+    );
+    document.getElementById('import').addEventListener('click', () =>
+      vscode.postMessage({ type: 'import' })
+    );
 
     window.addEventListener('message', (e) => {
       const msg = e.data;
       if (msg.type === 'hosts') {
-        hosts = msg.hosts;
+        hosts = Array.isArray(msg.hosts) ? msg.hosts : [];
+        const inc = Array.isArray(msg.collapsedGroups) ? msg.collapsedGroups : [];
+        collapsed = new Set(inc);
+        filterActive = !!msg.filterActive;
         if (selectedId && !hosts.some((h) => h.id === selectedId)) {
           selectedId = null;
         }

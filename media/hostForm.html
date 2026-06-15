@@ -96,6 +96,9 @@
     <label for="password">Password (optional)</label>
     <input id="password" type="password" placeholder="Leave empty to use SSH agent / keys" value="{{password}}" />
 
+    <label for="group">Group (optional)</label>
+    <input id="group" placeholder="e.g. Production, Staging, Home" value="{{group}}" />
+
     <label for="privateKey" style="margin-top:12px;">Private key / certificate (PEM, optional)</label>
     <div style="display:flex; gap:8px; align-items:center;">
       <button type="button" id="pickKey">Choose key file…</button>
@@ -193,6 +196,7 @@
         privateKey: $('privateKey').value || undefined,
         passphrase: $('passphrase').value || undefined,
         keepAlive: $('keepAlive').checked,
+        group: $('group').value || undefined,
       });
     }
 

@@ -56,6 +56,7 @@ export function openHostForm(
         privateKey,
         passphrase,
         keepAlive: !!msg.keepAlive,
+        group: msg.group ? String(msg.group).trim() || undefined : undefined,
       };
       await store.upsert(entry);
       panel.dispose();
@@ -98,6 +99,7 @@ function renderHtml(
     port: String(existing?.port ?? 22),
     username: esc(existing?.username),
     password: esc(existing?.password),
+    group: esc(existing?.group),
     focusId: existing ? 'name' : 'host',
   };
 

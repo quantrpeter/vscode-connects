@@ -82,6 +82,18 @@
         "title": "Clear Host Search",
         "category": "VSCode Connect",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "vscodeConnect.exportConfig",
+        "title": "Export Config",
+        "category": "VSCode Connect",
+        "icon": "$(save-as)"
+      },
+      {
+        "command": "vscodeConnect.importConfig",
+        "title": "Import Config",
+        "category": "VSCode Connect",
+        "icon": "$(repo-pull)"
       }
     ],
     "menus": {
@@ -100,6 +112,16 @@
           "command": "vscodeConnect.clearSearch",
           "when": "view == vscodeConnect.hosts && vscodeConnect.filtered",
           "group": "navigation@3"
+        },
+        {
+          "command": "vscodeConnect.exportConfig",
+          "when": "view == vscodeConnect.hosts",
+          "group": "navigation@10"
+        },
+        {
+          "command": "vscodeConnect.importConfig",
+          "when": "view == vscodeConnect.hosts",
+          "group": "navigation@11"
         }
       ],
       "commandPalette": [

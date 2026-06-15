@@ -60,6 +60,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('vscodeConnect.clearSearch', () => {
       view.setFilter('');
+    }),
+
+    vscode.commands.registerCommand('vscodeConnect.exportConfig', () => {
+      void view.exportConfig();
+    }),
+
+    vscode.commands.registerCommand('vscodeConnect.importConfig', () => {
+      void view.importConfig();
     })
   );
 }

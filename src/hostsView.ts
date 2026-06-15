@@ -26,7 +26,7 @@ export class HostsViewProvider implements vscode.WebviewViewProvider {
     view.webview.options = { enableScripts: true };
     view.webview.html = this.renderHtml();
 
-    view.webview.onDidReceiveMessage((msg) => {
+    view.webview.onDidReceiveMessage(async (msg) => {
       switch (msg.type) {
         case 'ready':
           this.refresh();
@@ -52,6 +52,21 @@ export class HostsViewProvider implements vscode.WebviewViewProvider {
                 : 'vscodeConnect.connect',
             String(msg.id)
           );
+          break;
+        case 'toggleGroup':
+          if (typeof msg.group === 'string') {
+            const current = this.store.getCollapsedGroups();
+            const g = msg.group;
+            const next = current.includes(g) ? current.filter((x) => x !== g) : [...current, g];
+            await this.store.setCollapsedGroups(next);
+            this.refresh();
+          }
+          break;
+        case 'export':
+          await this.exportConfig();
+          break;
+        case 'import':
+          await this.importConfig();
           break;
       }
     });
@@ -90,13 +105,19 @@ export class HostsViewProvider implements vscode.WebviewViewProvider {
   }
 
   private refresh(): void {
+    const hosts = this.visibleHosts();
+    const filterActive = !!this.filter.trim();
+    const collapsed = filterActive ? [] : this.store.getCollapsedGroups();
     this.view?.webview.postMessage({
       type: 'hosts',
-      hosts: this.visibleHosts().map((h) => ({
+      hosts: hosts.map((h) => ({
         id: h.id,
         name: h.name,
         detail: `${h.username}@${h.host}:${h.port}`,
+        group: h.group || '',
       })),
+      collapsedGroups: collapsed,
+      filterActive,
     });
   }
 
@@ -109,5 +130,49 @@ export class HostsViewProvider implements vscode.WebviewViewProvider {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
     return template.replace(/\{\{filter\}\}/g, esc);
+  }
+
+  /** Export all hosts (including secrets) to a user-chosen JSON file. */
+  async exportConfig(): Promise<void> {
+    try {
+      const json = this.store.exportToJson();
+      const count = this.store.getAll().length;
+      const uri = await vscode.window.showSaveDialog({
+        title: 'Export SSH Hosts',
+        filters: { 'JSON': ['json'] },
+        defaultUri: vscode.Uri.file('vscode-connect-hosts.json'),
+      });
+      if (uri) {
+        await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
+        vscode.window.showInformationMessage(`Exported ${count} SSH host(s).`);
+      }
+    } catch (e: any) {
+      vscode.window.showErrorMessage(`Export failed: ${e?.message || e}`);
+    }
+  }
+
+  /** Import hosts from a JSON file chosen by the user. */
+  async importConfig(): Promise<void> {
+    try {
+      const uris = await vscode.window.showOpenDialog({
+        title: 'Import SSH Hosts',
+        canSelectMany: false,
+        filters: { 'JSON': ['json'] },
+        openLabel: 'Import',
+      });
+      if (!uris || uris.length === 0) {
+        return;
+      }
+      const data = await vscode.workspace.fs.readFile(uris[0]);
+      const json = Buffer.from(data).toString('utf8');
+      const res = await this.store.importFromJson(json);
+      let msg = `Import complete: ${res.added} added, ${res.updated} updated.`;
+      if (res.errors.length > 0) {
+        msg += ` ${res.errors.length} skipped.`;
+      }
+      vscode.window.showInformationMessage(msg);
+    } catch (e: any) {
+      vscode.window.showErrorMessage(`Import failed: ${e?.message || e}`);
+    }
   }
 }
