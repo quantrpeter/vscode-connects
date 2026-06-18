@@ -2,7 +2,7 @@
   "name": "vscode-connects",
   "displayName": "VSCode Connect",
   "description": "An SSH client for VSCode: manage hosts in the sidebar, open SSH sessions as editor tabs, and sync hosts across machines.",
-  "version": "0.0.4",
+  "version": "0.0.5",
 	"publisher": "hongkongprogrammingsociety",
   "engines": {
     "vscode": "^1.80.0"

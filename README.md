@@ -20,6 +20,8 @@ An SSH client for VSCode, developer by Hong Kong Programming Society
 3. Double-click any host in the list to open an SSH terminal in the editor.
 4. Type in the search bar to filter hosts; select a host and use **Edit** or **Delete** to manage it.
 
+![](/screencap/1.png)
+
 ## Development
 
 ```bash
