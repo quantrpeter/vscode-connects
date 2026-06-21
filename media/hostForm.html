@@ -73,6 +73,36 @@
     border-radius: 6px 6px 0 0;
     display: block;
   }
+  .password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .password-wrapper input {
+    padding-right: 28px;
+    width: 100%;
+  }
+  .toggle-password {
+    position: absolute;
+    right: 6px;
+    background: transparent;
+    border: none;
+    color: var(--vscode-input-foreground);
+    opacity: 0.65;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+  .toggle-password:hover {
+    opacity: 1;
+    background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.06));
+  }
+  .toggle-password:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+  }
 </style>
 </head>
 <body>
@@ -94,7 +124,10 @@
     <label for="username">Username (optional)</label>
     <input id="username" placeholder="Leave empty to be prompted inside the terminal" value="{{username}}" />
     <label for="password">Password (optional)</label>
-    <input id="password" type="password" placeholder="Leave empty to use SSH agent / keys" value="{{password}}" />
+    <div class="password-wrapper">
+      <input id="password" type="password" placeholder="Leave empty to use SSH agent / keys" value="{{password}}" />
+      <button type="button" class="toggle-password" data-target="password" aria-label="Show password">👁</button>
+    </div>
 
     <label for="group">Group (optional)</label>
     <input id="group" placeholder="e.g. Production, Staging, Home" value="{{group}}" />
@@ -109,7 +142,10 @@
     <input id="keyFile" type="file" accept=".pem,.key,.ppk,text/plain,application/x-pem-file" style="display:none" />
 
     <label for="passphrase">Key passphrase (if the private key is encrypted)</label>
-    <input id="passphrase" type="password" placeholder="Leave empty if key is not encrypted" value="{{passphrase}}" />
+    <div class="password-wrapper">
+      <input id="passphrase" type="password" placeholder="Leave empty if key is not encrypted" value="{{passphrase}}" />
+      <button type="button" class="toggle-password" data-target="passphrase" aria-label="Show passphrase">👁</button>
+    </div>
 
     <label class="checkbox-row">
       <input id="keepAlive" type="checkbox" {{keepAliveChecked}} /> Keep alive (prevent idle disconnects)
@@ -209,6 +245,19 @@
       if (e.key === 'Enter' && e.target.tagName === 'INPUT') submit(false);
     });
     $('{{focusId}}').focus();
+
+    // Password / passphrase visibility toggles
+    document.querySelectorAll('.toggle-password').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-target');
+        const input = targetId ? $(targetId) : null;
+        if (!input) return;
+        const isHidden = input.type === 'password';
+        input.type = isHidden ? 'text' : 'password';
+        btn.textContent = isHidden ? '🙈' : '👁';
+        btn.setAttribute('aria-label', isHidden ? 'Hide password' : 'Show password');
+      });
+    });
   </script>
 </body>
 </html>

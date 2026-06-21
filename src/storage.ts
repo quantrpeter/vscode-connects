@@ -17,9 +17,17 @@ export interface HostEntry {
   keepAlive?: boolean;
   /** Optional group name used to organize hosts in the list (supports collapse/expand). */
   group?: string;
+  /**
+   * Timestamp (epoch ms) of the last modification to this entry.
+   * Used to merge records across devices when using Settings Sync.
+   * Deletes use a separate tombstone map that wins over older updates.
+   */
+  updatedAt?: number;
 }
 
 const HOSTS_KEY = 'vscodeConnect.hosts';
+const TOMBSTONES_KEY = 'vscodeConnect.hostTombstones';
+const LOCAL_KNOWLEDGE_KEY = 'vscodeConnect.hostsLocal';
 const SEEN_SYNC_HINT_KEY = 'vscodeConnect.hasSeenSyncHint';
 const COLLAPSED_GROUPS_KEY = 'vscodeConnect.collapsedGroups';
 
@@ -30,13 +38,148 @@ const COLLAPSED_GROUPS_KEY = 'vscodeConnect.collapsedGroups';
 export class HostStore {
   private readonly _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChange = this._onDidChange.event;
+  private _syncTimer?: NodeJS.Timeout;
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    context.globalState.setKeysForSync([HOSTS_KEY]);
+    context.globalState.setKeysForSync([HOSTS_KEY, TOMBSTONES_KEY]);
+
+    // Seed local (non-synced) knowledge so that on first load we don't treat
+    // already-present synced hosts as "new from another device".
+    this._seedLocalKnowledgeFromRaw();
+
+    // Periodically reconcile against the synced globalState so that hosts added
+    // or deleted on other devices appear without requiring a manual refresh.
+    this._startSyncWatcher();
+  }
+
+  private _seedLocalKnowledgeFromRaw(): void {
+    const lk = this.getLocalKnowledge();
+    const raw = this.getRawHosts();
+    const tombs = this.getTombstones();
+    let changed = false;
+
+    for (const h of raw) {
+      const tomb = tombs[h.id];
+      const entryTs = h.updatedAt ?? 0;
+      if (tomb && entryTs <= tomb) {
+        // This id is deleted; ensure it's not in local knowledge
+        if (lk.has(h.id)) {
+          lk.delete(h.id);
+          changed = true;
+        }
+        continue;
+      }
+      const local = lk.get(h.id);
+      if (!local || entryTs > (local.updatedAt ?? 0)) {
+        lk.set(h.id, h);
+        changed = true;
+      }
+    }
+    if (changed) {
+      void this.saveLocalKnowledge(lk);
+    }
+  }
+
+  private _startSyncWatcher(): void {
+    // Poll every ~2.5s. Settings Sync is not instantaneous; this keeps UI fresh
+    // when another device adds/updates/deletes a host.
+    this._syncTimer = setInterval(() => {
+      void this._reconcileWithRemote();
+    }, 2500);
+  }
+
+  private async _reconcileWithRemote(): Promise<void> {
+    const raw = this.getRawHosts();
+    const tombs = this.getTombstones();
+    const lk = this.getLocalKnowledge();
+
+    let changed = false;
+
+    // Bring in any records that are newer on the remote (synced) side
+    for (const h of raw) {
+      const tomb = tombs[h.id];
+      const entryTs = h.updatedAt ?? 0;
+      if (tomb && entryTs <= tomb) {
+        if (lk.has(h.id)) {
+          lk.delete(h.id);
+          changed = true;
+        }
+        continue;
+      }
+      const local = lk.get(h.id);
+      if (!local || entryTs > (local.updatedAt ?? 0)) {
+        lk.set(h.id, h);
+        changed = true;
+      }
+    }
+
+    // Apply tombstones that arrived from other devices
+    for (const [id, tombTs] of Object.entries(tombs)) {
+      const local = lk.get(id);
+      if (local && (local.updatedAt ?? 0) <= tombTs) {
+        lk.delete(id);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await this.saveLocalKnowledge(lk);
+      this._onDidChange.fire();
+    }
+  }
+
+  private getRawHosts(): HostEntry[] {
+    return this.context.globalState.get<HostEntry[]>(HOSTS_KEY, []);
   }
 
   getAll(): HostEntry[] {
-    return this.context.globalState.get<HostEntry[]>(HOSTS_KEY, []);
+    const raw = this.getRawHosts();
+    const tombstones = this.getTombstones();
+
+    // Deduplicate by id, keeping the entry with the highest updatedAt (defensive against sync artifacts)
+    const byId = new Map<string, HostEntry>();
+    for (const h of raw) {
+      const prev = byId.get(h.id);
+      const hTs = h.updatedAt ?? 0;
+      if (!prev || hTs > (prev.updatedAt ?? 0)) {
+        byId.set(h.id, h);
+      }
+    }
+
+    // Apply tombstones: a tombstone wins over updates with equal or older timestamp
+    const filtered: HostEntry[] = [];
+    for (const [id, h] of byId) {
+      const tomb = tombstones[id];
+      const entryTs = h.updatedAt ?? 0;
+      if (tomb && entryTs <= tomb) {
+        continue;
+      }
+      filtered.push(h);
+    }
+    return filtered.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private getTombstones(): Record<string, number> {
+    return this.context.globalState.get<Record<string, number>>(TOMBSTONES_KEY, {});
+  }
+
+  private async saveTombstones(map: Record<string, number>): Promise<void> {
+    await this.context.globalState.update(TOMBSTONES_KEY, map);
+  }
+
+  private getLocalKnowledge(): Map<string, HostEntry> {
+    const obj = this.context.globalState.get<Record<string, HostEntry>>(LOCAL_KNOWLEDGE_KEY, {});
+    const m = new Map<string, HostEntry>();
+    for (const [k, v] of Object.entries(obj)) {
+      if (v && typeof v === 'object') m.set(k, v as HostEntry);
+    }
+    return m;
+  }
+
+  private async saveLocalKnowledge(map: Map<string, HostEntry>): Promise<void> {
+    const obj: Record<string, HostEntry> = {};
+    for (const [k, v] of map) obj[k] = v;
+    await this.context.globalState.update(LOCAL_KNOWLEDGE_KEY, obj);
   }
 
   /** Returns true if the user has never been shown the Settings Sync hint on this machine. */
@@ -54,15 +197,46 @@ export class HostStore {
   }
 
   async upsert(entry: HostEntry): Promise<void> {
-    const hosts = this.getAll();
-    const idx = hosts.findIndex((h) => h.id === entry.id);
-    if (idx >= 0) {
-      hosts[idx] = entry;
-    } else {
-      hosts.push(entry);
+    const now = Date.now();
+    const e: HostEntry = { ...entry, updatedAt: now };
+
+    // Read the raw current state (may contain records synced from other devices)
+    const raw = this.getRawHosts();
+    let tombstones = this.getTombstones();
+
+    // Clear any tombstone for this id — the user is explicitly saving/updating it now.
+    if (tombstones[e.id]) {
+      tombstones = { ...tombstones };
+      delete tombstones[e.id];
     }
-    hosts.sort((a, b) => a.name.localeCompare(b.name));
-    await this.context.globalState.update(HOSTS_KEY, hosts);
+
+    // Build best-known version per id from the current raw (keep highest timestamp on duplicates)
+    const byId = new Map<string, HostEntry>();
+    for (const h of raw) {
+      const prev = byId.get(h.id);
+      const hTs = h.updatedAt ?? 0;
+      if (!prev || hTs > (prev.updatedAt ?? 0)) {
+        byId.set(h.id, h);
+      }
+    }
+
+    // Our change wins for this id (fresh timestamp)
+    byId.set(e.id, e);
+
+    // Write merged list (remote records we didn't touch are preserved)
+    const merged = Array.from(byId.values());
+    merged.sort((a, b) => a.name.localeCompare(b.name));
+
+    await this.context.globalState.update(HOSTS_KEY, merged);
+    if (Object.keys(tombstones).length !== Object.keys(this.getTombstones()).length) {
+      await this.saveTombstones(tombstones);
+    }
+
+    // Record what this device last wrote for this id (used to detect external merges)
+    const lk = this.getLocalKnowledge();
+    lk.set(e.id, e);
+    await this.saveLocalKnowledge(lk);
+
     this._onDidChange.fire();
 
     // One-time hint: remind users they need Settings Sync enabled for cross-machine roaming.
@@ -83,8 +257,22 @@ export class HostStore {
   }
 
   async delete(id: string): Promise<void> {
-    const hosts = this.getAll().filter((h) => h.id !== id);
-    await this.context.globalState.update(HOSTS_KEY, hosts);
+    const now = Date.now();
+
+    // Record a tombstone so the delete wins across devices even if older copies arrive via sync later.
+    const tombstones = { ...this.getTombstones(), [id]: now };
+    await this.saveTombstones(tombstones);
+
+    // Prune the id from the raw hosts array so we don't carry deleted data in the synced value.
+    // (The tombstone is what provides cross-device durability.)
+    const raw = this.getRawHosts().filter((h) => h.id !== id);
+    await this.context.globalState.update(HOSTS_KEY, raw);
+
+    // Remove from our local knowledge as well.
+    const lk = this.getLocalKnowledge();
+    lk.delete(id);
+    await this.saveLocalKnowledge(lk);
+
     this._onDidChange.fire();
   }
 
@@ -110,6 +298,7 @@ export class HostStore {
    * - If an entry has an id that already exists, it updates that host.
    * - Otherwise a new id is generated (or the provided id is used if present).
    * - Missing required fields (name, host) cause the entry to be skipped. Username is optional.
+   * - Uses merge semantics (timestamps + tombstones) so imports do not overwrite hosts added on other devices.
    * Returns counts and any non-fatal errors encountered.
    */
   async importFromJson(json: string): Promise<{ added: number; updated: number; errors: string[] }> {
@@ -124,54 +313,95 @@ export class HostStore {
       return { added: 0, updated: 0, errors: ['Expected a JSON array of host objects'] };
     }
 
-    const current = this.getAll();
-    const byId = new Map(current.map((h) => [h.id, h] as const));
+    const now = Date.now();
+    const raw = this.getRawHosts();
+    let tombstones = this.getTombstones();
+
+    // Build best-known per id from raw (highest timestamp wins on duplicates)
+    const byId = new Map<string, HostEntry>();
+    for (const h of raw) {
+      const prev = byId.get(h.id);
+      const hTs = h.updatedAt ?? 0;
+      if (!prev || hTs > (prev.updatedAt ?? 0)) {
+        byId.set(h.id, h);
+      }
+    }
 
     let added = 0;
     let updated = 0;
 
-    for (const raw of parsed) {
-      if (!raw || typeof raw !== 'object') {
+    for (const r of parsed) {
+      if (!r || typeof r !== 'object') {
         errors.push('Skipped non-object entry');
         continue;
       }
-      const name = String(raw.name || '').trim();
-      const host = String(raw.host || '').trim();
-      const username = raw.username != null ? String(raw.username).trim() || undefined : undefined;
+      const name = String(r.name || '').trim();
+      const host = String(r.host || '').trim();
+      const username = r.username != null ? String(r.username).trim() || undefined : undefined;
       if (!name || !host) {
         errors.push('Skipped entry missing required name/host');
         continue;
       }
 
-      const id = (typeof raw.id === 'string' && raw.id) ? raw.id : crypto.randomUUID();
+      const id = (typeof r.id === 'string' && r.id) ? r.id : crypto.randomUUID();
+
+      // Prefer an explicit updatedAt from the import if present and numeric; otherwise use now.
+      const importedTs = typeof r.updatedAt === 'number' ? r.updatedAt : undefined;
+      const ts = importedTs && importedTs > 0 ? importedTs : now;
 
       const entry: HostEntry = {
         id,
         name,
         host,
-        port: Number(raw.port) || 22,
+        port: Number(r.port) || 22,
         username,
-        password: raw.password ? String(raw.password) : undefined,
-        privateKey: raw.privateKey ? String(raw.privateKey) : undefined,
-        passphrase: raw.passphrase ? String(raw.passphrase) : undefined,
-        keepAlive: !!raw.keepAlive,
-        group: raw.group != null ? String(raw.group).trim() || undefined : undefined,
+        password: r.password ? String(r.password) : undefined,
+        privateKey: r.privateKey ? String(r.privateKey) : undefined,
+        passphrase: r.passphrase ? String(r.passphrase) : undefined,
+        keepAlive: !!r.keepAlive,
+        group: r.group != null ? String(r.group).trim() || undefined : undefined,
+        updatedAt: ts,
       };
 
-      if (byId.has(id)) {
-        const idx = current.findIndex((h) => h.id === id);
-        if (idx >= 0) {
-          current[idx] = entry;
+      const prev = byId.get(id);
+      const prevTs = prev?.updatedAt ?? 0;
+
+      // Clear tombstone for this id (import is an explicit keep/update)
+      if (tombstones[id]) {
+        tombstones = { ...tombstones };
+        delete tombstones[id];
+      }
+
+      if (prev) {
+        // Only count as "updated" if we are taking a newer or equal-timestamp import
+        if (ts >= prevTs) {
+          byId.set(id, entry);
           updated++;
         }
+        // else: imported older copy; keep the one we already have
       } else {
-        current.push(entry);
+        byId.set(id, entry);
         added++;
       }
     }
 
-    current.sort((a, b) => a.name.localeCompare(b.name));
-    await this.context.globalState.update(HOSTS_KEY, current);
+    const merged = Array.from(byId.values());
+    merged.sort((a, b) => a.name.localeCompare(b.name));
+
+    await this.context.globalState.update(HOSTS_KEY, merged);
+    await this.saveTombstones(tombstones);
+
+    // Update local knowledge for ids present in the import (so we don't treat them as "external" later)
+    const lk = this.getLocalKnowledge();
+    for (const r of parsed) {
+      if (!r || typeof r !== 'object') continue;
+      const id = (typeof r.id === 'string' && r.id) ? r.id : undefined;
+      if (id && byId.has(id)) {
+        lk.set(id, byId.get(id)!);
+      }
+    }
+    await this.saveLocalKnowledge(lk);
+
     this._onDidChange.fire();
 
     return { added, updated, errors };
