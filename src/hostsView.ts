@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { HostEntry, HostStore } from './storage';
@@ -67,6 +68,9 @@ export class HostsViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'import':
           await this.importConfig();
+          break;
+        case 'importSshConfig':
+          await this.importFromSshConfig();
           break;
         case 'openSftp':
           if (msg.id) {
@@ -179,6 +183,34 @@ export class HostsViewProvider implements vscode.WebviewViewProvider {
       vscode.window.showInformationMessage(msg);
     } catch (e: any) {
       vscode.window.showErrorMessage(`Import failed: ${e?.message || e}`);
+    }
+  }
+
+  /** Import hosts from the user's OpenSSH client config (~/.ssh/config). */
+  async importFromSshConfig(): Promise<void> {
+    try {
+      const defaultPath = path.join(os.homedir(), '.ssh', 'config');
+      const uri = await vscode.window.showOpenDialog({
+        title: 'Import from OpenSSH config',
+        canSelectMany: false,
+        filters: { 'All Files': ['*'] },
+        defaultUri: vscode.Uri.file(defaultPath),
+        openLabel: 'Import',
+      });
+      if (!uri || uri.length === 0) {
+        return;
+      }
+      const res = await this.store.importFromSshConfig(uri[0].fsPath);
+      let msg = `Import complete: ${res.added} added, ${res.updated} updated.`;
+      if (res.errors.length > 0) {
+        msg += ` ${res.errors.length} error(s).`;
+      }
+      if (res.warnings.length > 0) {
+        msg += ` ${res.warnings.length} warning(s).`;
+      }
+      vscode.window.showInformationMessage(msg);
+    } catch (e: any) {
+      vscode.window.showErrorMessage(`Import from SSH config failed: ${e?.message || e}`);
     }
   }
 }

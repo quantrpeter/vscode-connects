@@ -3,7 +3,7 @@
   "displayName": "VSCode Connect",
   "description": "An SSH client for VSCode: manage hosts in the sidebar, open SSH sessions as editor tabs, and sync hosts across machines.",
   "version": "0.0.9",
-	"publisher": "hongkongprogrammingsociety",
+  "publisher": "hongkongprogrammingsociety",
   "engines": {
     "vscode": "^1.80.0"
   },
@@ -15,10 +15,10 @@
   "activationEvents": [
     "onView:vscodeConnect.hosts"
   ],
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/quantrpeter/vscode-connects"
-	},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/quantrpeter/vscode-connects"
+  },
   "scripts": {
     "compile": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --external:cpu-features --external:*.node --format=cjs --platform=node",
     "watch": "npm run compile -- --watch",
@@ -96,6 +96,12 @@
         "icon": "$(repo-pull)"
       },
       {
+        "command": "vscodeConnect.importSshConfig",
+        "title": "Import from ~/.ssh/config",
+        "category": "VSCode Connect",
+        "icon": "$(terminal-linux)"
+      },
+      {
         "command": "vscodeConnect.openSftpExplorer",
         "title": "Open SFTP Explorer",
         "category": "VSCode Connect",
@@ -128,6 +134,11 @@
           "command": "vscodeConnect.importConfig",
           "when": "view == vscodeConnect.hosts",
           "group": "navigation@11"
+        },
+        {
+          "command": "vscodeConnect.importSshConfig",
+          "when": "view == vscodeConnect.hosts",
+          "group": "navigation@12"
         }
       ],
       "commandPalette": [
@@ -146,11 +157,16 @@
         {
           "command": "vscodeConnect.openSftpExplorer",
           "when": "false"
+        },
+        {
+          "command": "vscodeConnect.importSshConfig",
+          "when": "false"
         }
       ]
     }
   },
   "dependencies": {
+    "ssh-config": "^5.0.0",
     "ssh2": "^1.16.0"
   },
   "devDependencies": {

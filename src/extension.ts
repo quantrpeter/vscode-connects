@@ -71,6 +71,10 @@ export function activate(context: vscode.ExtensionContext): void {
       void view.importConfig();
     }),
 
+    vscode.commands.registerCommand('vscodeConnect.importSshConfig', () => {
+      void view.importFromSshConfig();
+    }),
+
     vscode.commands.registerCommand('vscodeConnect.openSftpExplorer', (arg: unknown) => {
       const entry = resolveEntry(arg);
       if (entry) {

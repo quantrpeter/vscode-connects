@@ -13,10 +13,19 @@ An SSH client for VSCode, developer by Hong Kong Programming Society
 
 > **Security note:** passwords are stored in plain form inside the synced extension state so they can roam between machines. If you don't want that, leave the password field empty and use SSH keys / agent auth instead.
 
+## Import from `~/.ssh/config`
+
+Click **Import ~/.ssh/config** in the sidebar to import your existing OpenSSH client config.
+
+- Each `Host` entry becomes a saved host (wildcard / negated patterns are skipped).
+- `HostName`, `Port`, `User`, `IdentityFile`, `ServerAliveInterval`, and `TCPKeepAlive` are read automatically.
+- Imported hosts are grouped under **SSH config** so you can tell them apart.
+- If an imported host has a readable private key, its content is stored for key-based auth.
+
 ## Usage
 
 1. Click the **VSCode Connects** icon in the activity bar.
-2. Click **Add** to create a host. Fill in name, host, port, username, and optionally a password, then **Save & Connect**.
+2. Click **Add** to create a host, or **Import ~/.ssh/config** to pull in existing OpenSSH hosts. Fill in name, host, port, username, and optionally a password, then **Save & Connect**.
 3. Double-click any host in the list to open an SSH terminal in the editor.
 4. Type in the search bar to filter hosts; select a host and use **Edit** or **Delete** to manage it.
 

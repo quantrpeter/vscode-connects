@@ -142,6 +142,7 @@
   <div class="buttons secondary">
     <button id="export">Export JSON</button>
     <button id="import">Import JSON</button>
+    <button id="importSshConfig">Import ~/.ssh/config</button>
   </div>
   <div class="list" id="list"></div>
   <script>
@@ -271,6 +272,9 @@
     );
     document.getElementById('import').addEventListener('click', () =>
       vscode.postMessage({ type: 'import' })
+    );
+    document.getElementById('importSshConfig').addEventListener('click', () =>
+      vscode.postMessage({ type: 'importSshConfig' })
     );
 
     window.addEventListener('message', (e) => {

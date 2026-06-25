@@ -1,5 +1,9 @@
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import * as vscode from 'vscode';
+import SSHConfig from 'ssh-config';
 
 export interface HostEntry {
   id: string;
@@ -414,4 +418,101 @@ export class HostStore {
 
     return { added, updated, errors };
   }
+
+  /**
+   * Imports hosts from an OpenSSH client config file (usually ~/.ssh/config).
+   * - Skips wildcard / negated Host patterns.
+   * - Resolves HostName, Port, User, IdentityFile, and keep-alive settings per host.
+   * - Reads the first readable IdentityFile and stores its PEM content as privateKey.
+   * - Assigns group "SSH config" so imported hosts are easy to spot.
+   * Returns the same shape as importFromJson plus a list of non-fatal warnings.
+   */
+  async importFromSshConfig(configPath: string): Promise<{ added: number; updated: number; errors: string[]; warnings: string[] }> {
+    const warnings: string[] = [];
+    let text: string;
+    try {
+      text = fs.readFileSync(configPath, 'utf8');
+    } catch (e: any) {
+      return { added: 0, updated: 0, errors: [`Failed to read ${configPath}: ${e?.message || e}`], warnings };
+    }
+
+    const config = SSHConfig.parse(text);
+    const entries: HostEntry[] = [];
+
+    for (const line of config) {
+      if (line.type !== SSHConfig.DIRECTIVE || line.param !== 'Host') {
+        continue;
+      }
+      const hostLine: string[] = Array.isArray(line.value)
+        ? line.value.map((v) => (typeof v === 'string' ? v : v.val))
+        : [line.value];
+      const aliases = hostLine.filter((a) => a && typeof a === 'string') as string[];
+
+      for (const alias of aliases) {
+        const trimmed = alias.trim();
+        // Skip wildcard/negated patterns; they are not concrete hosts.
+        if (!trimmed || trimmed.includes('*') || trimmed.includes('?') || trimmed.startsWith('!')) {
+          continue;
+        }
+
+        const resolved = config.compute(trimmed);
+        const hostName = firstString(resolved.HostName) || trimmed;
+        const portRaw = firstString(resolved.Port);
+        const port = portRaw ? parseInt(portRaw, 10) || 22 : 22;
+        const username = firstString(resolved.User);
+
+        let privateKey: string | undefined;
+        const identityFiles = arrayOfStrings(resolved.IdentityFile);
+        for (const keyPath of identityFiles) {
+          const expanded = keyPath.startsWith('~')
+            ? path.join(os.homedir(), keyPath.slice(1))
+            : keyPath;
+          try {
+            privateKey = fs.readFileSync(expanded, 'utf8');
+            break;
+          } catch (e: any) {
+            warnings.push(`Could not read key for ${trimmed}: ${expanded}`);
+          }
+        }
+
+        const serverAlive = firstString(resolved.ServerAliveInterval);
+        const tcpKeepAlive = firstString(resolved.TCPKeepAlive);
+        const keepAlive = serverAlive ? parseInt(serverAlive, 10) > 0 : tcpKeepAlive === 'yes';
+
+        entries.push({
+          id: crypto.randomUUID(),
+          name: trimmed,
+          host: hostName,
+          port,
+          username,
+          privateKey,
+          keepAlive,
+          group: 'SSH config',
+          updatedAt: Date.now(),
+        });
+      }
+    }
+
+    if (entries.length === 0) {
+      return { added: 0, updated: 0, errors: [], warnings: ['No concrete hosts found in ~/.ssh/config'] };
+    }
+
+    const res = await this.importFromJson(JSON.stringify(entries));
+    return { ...res, warnings };
+  }
+}
+
+function firstString(value: string | string[] | undefined): string | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  const s = Array.isArray(value) ? value[0] : value;
+  return typeof s === 'string' ? s.trim() || undefined : undefined;
+}
+
+function arrayOfStrings(value: string | string[] | undefined): string[] {
+  if (value == null) {
+    return [];
+  }
+  return (Array.isArray(value) ? value : [value]).filter((s): s is string => typeof s === 'string');
 }
