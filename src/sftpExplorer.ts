@@ -70,6 +70,52 @@ export function openSftpExplorer(extensionUri: vscode.Uri, entry: HostEntry, con
   const post = (msg: any) => panel.webview.postMessage(msg);
 
   async function connect(): Promise<void> {
+    // Prompt for missing credentials (username and/or password) so SFTP works
+    // even when the host entry was saved without a password.
+    let effectiveUsername = entry.username;
+    let effectivePassword: string | undefined = entry.password;
+    let effectivePassphrase: string | undefined = entry.passphrase;
+
+    if (!effectiveUsername) {
+      const u = await vscode.window.showInputBox({
+        prompt: `Username for ${entry.host}`,
+        placeHolder: 'username',
+        ignoreFocusOut: true,
+      });
+      if (!u) {
+        post({ type: 'error', message: 'Username is required to connect.' });
+        return Promise.reject(new Error('Username required'));
+      }
+      effectiveUsername = u;
+    }
+
+    const hasPrivateKey = !!entry.privateKey;
+    if (!hasPrivateKey && !effectivePassword) {
+      const p = await vscode.window.showInputBox({
+        prompt: `Password for ${effectiveUsername}@${entry.host}`,
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (p === undefined) {
+        post({ type: 'error', message: 'Password input was cancelled.' });
+        return Promise.reject(new Error('Password required'));
+      }
+      effectivePassword = p;
+    }
+
+    // If a private key is configured without a stored passphrase, optionally prompt.
+    if (hasPrivateKey && !effectivePassphrase) {
+      const ph = await vscode.window.showInputBox({
+        prompt: `Passphrase for private key (leave empty if none)`,
+        password: true,
+        ignoreFocusOut: true,
+      });
+      // ph may be '', which is valid (no passphrase). Only treat explicit cancel as undefined.
+      if (ph !== undefined) {
+        effectivePassphrase = ph || undefined;
+      }
+    }
+
     return new Promise((resolve, reject) => {
       client = new Client();
 
@@ -81,7 +127,7 @@ export function openSftpExplorer(extensionUri: vscode.Uri, entry: HostEntry, con
             return;
           }
           sftp = sftpSession;
-          post({ type: 'connected', host: `${entry.username ? entry.username + '@' : ''}${entry.host}:${entry.port}` });
+          post({ type: 'connected', host: `${effectiveUsername ? effectiveUsername + '@' : ''}${entry.host}:${entry.port}` });
           // Resolve to a full absolute path instead of "." so the UI shows proper location
           sftp!.realpath('.', (rpErr, absPath) => {
             if (!rpErr && absPath) {
@@ -105,11 +151,16 @@ export function openSftpExplorer(extensionUri: vscode.Uri, entry: HostEntry, con
         reject(err);
       });
 
+      // Support keyboard-interactive auth (common when password auth is required)
+      client.on('keyboard-interactive', (_name, _instructions, _lang, prompts, finish) => {
+        finish(prompts.map(() => effectivePassword ?? ''));
+      });
+
       const connectOpts: any = {
         host: entry.host,
         port: entry.port,
-        username: entry.username,
-        password: entry.password || undefined,
+        username: effectiveUsername,
+        password: effectivePassword || undefined,
         tryKeyboard: true,
         agent: process.env.SSH_AUTH_SOCK,
         readyTimeout: 20000,
@@ -122,8 +173,8 @@ export function openSftpExplorer(extensionUri: vscode.Uri, entry: HostEntry, con
 
       if (entry.privateKey) {
         connectOpts.privateKey = entry.privateKey;
-        if (entry.passphrase) {
-          connectOpts.passphrase = entry.passphrase;
+        if (effectivePassphrase) {
+          connectOpts.passphrase = effectivePassphrase;
         }
       }
 
