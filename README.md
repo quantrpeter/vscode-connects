@@ -36,6 +36,14 @@ Then press `F5` in VSCode to launch an Extension Development Host.
 ```bash
 npm install -g @vscode/vsce
 vsce package
+vsce publish
+```
+
+publish to cursor
+
+```bash
+npm install -g ovsx
+ovsx publish -p <token>
 ```
 
 Install the generated `.vsix` via "Extensions: Install from VSIX...".
